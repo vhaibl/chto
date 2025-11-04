@@ -47,6 +47,13 @@ pip install aiogram openai
 python main.py
 ```
 
+## `requirements.txt`:
+```text
+
+aiogram==3.13.1
+openai==1.54.3
+```
+
 ## Docker
 
 `Dockerfile` example:
@@ -71,17 +78,10 @@ CMD ["python", "-u", "main.py"]
 ```
 
 
-`requirements.txt`:
-```text
-
-aiogram==3.13.1
-openai==1.54.3
-```
-
+`docker-compose.yml` example:
 
 ```yaml
 
-`docker-compose.yml` example:
 version: "3.8"
 
 services:
