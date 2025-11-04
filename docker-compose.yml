@@ -1,0 +1,12 @@
+version: "3.8"
+
+services:
+  telegram-bot:
+    build: .
+    container_name: news_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - /root/chto/data:/app/bot_data
+    working_dir: /app
