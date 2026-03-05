@@ -34,7 +34,7 @@ A Telegram bot that posts one sarcastic news per day (11:00–14:59), using:
 Create `.env`:
 ```
 TELEGRAM_TOKEN=your_telegram_bot_token
-OPENAI_API_KEY=your_openai_api_key
+OPENAIROUTER_API_KEY=your_openai_api_key
 CHANNEL_ID=@your_channel # optional; leave empty to send to bot self chat
 ```
 

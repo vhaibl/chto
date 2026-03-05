@@ -8,23 +8,47 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from openai import AsyncOpenAI
 
+
 # ===================== Configuration =====================
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-CHANNEL_ID = os.getenv("CHANNEL_ID", "")  # e.g., "@your_channel" or leave empty for bot self chat
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+CHANNEL_ID = os.getenv("CHANNEL_ID", "")
+ADMIN_ID = os.getenv("ADMIN_ID", "")
 
 # Paths and files
 DATA_DIR = Path("bot_data")
 DATA_DIR.mkdir(exist_ok=True)
 HISTORY_FILE = DATA_DIR / "history.json"
 LAST_SENT_FILE = DATA_DIR / "last_sent.txt"
-CITIES_FILE = Path("cities.json")   # array of objects: [{ "name": "Углич", ...}, ...]
-ITEMS_FILE = Path("items.json")     # array of strings: ["ручка", "карандаш", "маркер"]
+CITIES_FILE = Path("cities.json")
+ITEMS_FILE = Path("items.json")
 
-# OpenAI Chat Completions client
-client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+# OpenRouter client with OpenAI SDK
+client = AsyncOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY,
+    default_headers={
+        "X-Title": "@chto_dostali_bot",
+    }
+)
 dp = Dispatcher()
+
+# Варианты для рандомизации (константы, не выбранные значения)
+TONES = [
+    "злой сарказм", "чёрный юмор", "наивное удивление", "журналистская серьёзность", 
+    "панибратство", "в стиле udaff.com", "занудство профессора", "пафосный героизм",
+    "слёзная мелодрама", "детская непосредственность", "военная отчётность", 
+    "репортаж с места событий", "зависть соседа", "гордость матери",
+    "обида бывшей", "восторг блогера", "крик о помощи", "философская ипостась",
+    "голос свыше", "шёпот сумасшедшего", "инструкция из ГОСТа",
+    "рецензия кинокритика", "отчёт прокуратуры", "дневник подростка",
+    "романтический эпос", "агрессивный маркетинг", "научная фантастика",
+    "сказка на ночь", "объявление в подъезде", "пересказ пьяного друга"
+]
+
+RETRY_DELAYS = [1, 5, 10, 15, 20, 25, 30]
+
 
 # ===================== Storage / utilities =====================
 
@@ -79,6 +103,7 @@ def load_items_list() -> list:
         raise RuntimeError('items.json must be an array of strings, e.g.: ["ручка", "карандаш"]')
     return data
 
+
 # ===================== Unique selection (no repeats) =====================
 
 async def pick_city(cities_list: list) -> str:
@@ -113,38 +138,94 @@ async def pick_item(items_list: list) -> str:
     print(f"[ITEM] {chosen}")
     return chosen
 
+
 # ===================== News generation (Chat Completions) =====================
 
 async def generate_news_chat(city: str, item: str) -> str:
     """Generate a sarcastic short news text using OpenAI Chat Completions (prompt in Russian)."""
-    prompt = f"""Пожалуйста, сгенерируй короткую саркастическую новость (3–4 предложения) в стиле udaff.com о забавном медицинском случае в России.
+    
+    # 🔥 РАНДОМИЗАЦИЯ ПРОИСХОДИТ ЗДЕСЬ, ПРИ КАЖДОМ ВЫЗОВЕ
+    chosen_tone = random.choice(TONES)
 
-Требования:
-- Город: {city}
-- Предмет: {item}
-- Опиши, как житель этого города засунул предмет в задницу.
-- Локацию придумай каждый раз заново и впиши естественно в текст (без списков).
-- Специалиста также придумай заново и впиши естественно в текст (без списков).
-- Исход случайный: успешно (75%) или неудачно (25%).
-- С вероятностью 30% добавь короткую смешную цитату в кавычках.
-- Начни с заголовка в формате: 🚑 {city}: [краткое описание].
+    
+    prompt = f"""Пожалуйста, сгенерируй короткую саркастическую новость (3–4 предложения) в стиле {chosen_tone} о забавном медицинском случае в России.
 
-Пиши остроумно и кратко. Каждый элемент делай уникальным при каждом запуске."""
-    try:
-        resp = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.9,
-            max_tokens=500,
-        )
-        text = resp.choices[0].message.content.strip()
-        return text
-    except Exception as e:
-        # Fallback to a minimal message on API error
-        print(f"[NEWS ERROR] {e}")
-        return f"🚑 {city}: Местный житель попал в больницу после неудачного эксперимента с предметом «{item}»."
+        Требования:
+        - Город: {city}
+        - Предмет: {item}
+        - Опиши, как житель этого города засунул этот {item} в задницу.
+        - Локацию придумай каждый раз заново и впиши естественно в текст (без списков).
+        - "Специалиста" (друга, копа, врача или случайного спасателя) придумай заново и впиши естественно в текст (без списков) — пусть будет колоритный тип вроде "дядя Вася из соседнего подъезда" или "проктолог с TikTok".
+        - Исход случайный: успешно (75%) или 'эпик фейл' (25%).
+        - С вероятностью 30% добавь короткую смешную цитату в кавычках от героя или "специалиста"
+        - Начни с заголовка в формате: 🚑 {city}: [краткое описание].
+
+        Пиши остроумно, с сарказмом и лёгким матом. Каждый элемент делай уникальным при каждом запуске. 
+        Добавь абсурда и самоиронии, чтоб было ржачно, но не переигрывай.
+        Обязательно используй эти параметры, но не упоминай их явно в тексте."""
+    
+    print(f"[DEBUG] Requesting news for {city} / {item}...")
+    
+    resp = await client.chat.completions.create(
+        model="arcee-ai/trinity-large-preview:free",
+        # model="tngtech/deepseek-r1t2-chimera",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.8,
+        max_tokens=2000,
+    )
+    
+    finish_reason = resp.choices[0].finish_reason
+    content = resp.choices[0].message.content
+    content = (content or "").strip()
+    
+    print(f"[DEBUG] Finish reason: {finish_reason}")
+    print(f"[DEBUG] Length: {len(content)} chars")
+    
+    if finish_reason == "length":
+        content += "\n\n(текст оборван по лимиту токенов)"
+        
+    return content
+
+
+async def generate_news_with_retries(city: str, item: str) -> tuple[str, bool]:
+    """
+    Генерирует новость с повторными попытками при ошибках.
+    Возвращает кортеж (текст, успех).
+    """
+    last_error = None
+    
+    for attempt, delay_minutes in enumerate(RETRY_DELAYS):
+        try:
+            print(f"[RETRY] Попытка {attempt + 1}/{len(RETRY_DELAYS)} для {city}/{item}")
+            result = await generate_news_chat(city, item)
+            print(f"[RETRY] Успех на попытке {attempt + 1}")
+            return result, True
+            
+        except Exception as e:
+            last_error = e
+            print(f"[RETRY ERROR] Попытка {attempt + 1} не удалась: {e}")
+            
+            if attempt < len(RETRY_DELAYS) - 1:
+                delay_seconds = delay_minutes * 60
+                print(f"[RETRY] Ожидание {delay_minutes} минут перед следующей попыткой...")
+                await asyncio.sleep(delay_seconds)
+    
+    print(f"[RETRY] Все попытки исчерпаны. Последняя ошибка: {last_error}")
+    return str(last_error), False
+
 
 # ===================== Sending and scheduling =====================
+async def notify_admin(bot: Bot, message: str):
+    if not ADMIN_ID:
+        print(f"[ADMIN NOTIFY] ADMIN_ID не установлен, сообщение: {message}")
+        return
+    
+    try:
+        await bot.send_message(ADMIN_ID, message)
+        print(f"[ADMIN NOTIFY] Уведомление отправлено админу")
+    except Exception as e:
+        print(f"[ADMIN NOTIFY ERROR] Не удалось отправить уведомление админу: {e}")
+
 
 async def send_daily_news(bot: Bot, cities_list: list, items_list: list):
     """Send exactly one message per day; skip if already sent today."""
@@ -153,7 +234,21 @@ async def send_daily_news(bot: Bot, cities_list: list, items_list: list):
         return
     city = await pick_city(cities_list)
     item = await pick_item(items_list)
-    text = await generate_news_chat(city, item)
+    
+    text, success = await generate_news_with_retries(city, item)    
+    if not success:
+        error_message = (
+            f"⚠️ <b>Ошибка генерации новости</b>\n\n"
+            f"Город: {city}\n"
+            f"Предмет: {item}\n"
+            f"Все {len(RETRY_DELAYS)} попытки исчерпаны.\n"
+            f"Последняя ошибка: {text}\n\n"
+            f"Новость в канал не отправлена."
+        )
+        await notify_admin(bot, error_message)
+        print(f"[SEND] ❌ Генерация не удалась, админ уведомлён")
+        return
+    
     target = CHANNEL_ID or (await bot.get_me()).id
     await bot.send_message(target, text)
     save_last_sent_date(datetime.date.today().isoformat())
@@ -186,6 +281,7 @@ async def schedule_daily_news(bot: Bot, cities_list: list, items_list: list):
         if not was_sent_today():
             await send_daily_news(bot, cities_list, items_list)
 
+
 # ===================== Bot commands =====================
 
 @dp.message(Command("start"))
@@ -205,7 +301,12 @@ async def cmd_news(message: types.Message):
         items_list = load_items_list()
         city = await pick_city(cities_list)
         item = await pick_item(items_list)
-        text = await generate_news_chat(city, item)
+        text, success = await generate_news_with_retries(city, item)
+        
+        if not success:
+            await message.answer(f"❌ Не удалось сгенерировать новость после {len(RETRY_DELAYS)} попыток. Ошибка: {text}")
+            return
+            
         await message.answer(text)
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
@@ -221,16 +322,16 @@ async def cmd_stats(message: types.Message):
         f"✅ Сегодня: {'да' if was_sent_today() else 'нет'}"
     )
 
+
 # ===================== main =====================
 
 async def main():
     """Entrypoint: validate config, start scheduler and polling."""
     if not TELEGRAM_TOKEN:
         raise RuntimeError("TELEGRAM_TOKEN is not set")
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set")
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY is not set")
 
-    # Validate data availability early
     cities_list = load_cities_list()
     items_list = load_items_list()
     if not cities_list:
@@ -240,10 +341,9 @@ async def main():
 
     bot = Bot(token=TELEGRAM_TOKEN)
 
-    # Background scheduler task
     scheduler_task = asyncio.create_task(schedule_daily_news(bot, cities_list, items_list))
     try:
-        print("🚀 Bot started (Chat Completions, gpt-4o-mini)")
+        print("🚀 Bot started (OpenRouter)")
         await dp.start_polling(bot)
     finally:
         scheduler_task.cancel()
@@ -252,6 +352,6 @@ async def main():
         except asyncio.CancelledError:
             pass
 
+
 if __name__ == "__main__":
-    # For Docker logs, consider running Python in unbuffered mode or set PYTHONUNBUFFERED=1
     asyncio.run(main())
